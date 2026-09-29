@@ -12,6 +12,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `endpoint` and `force_path_style` on `S3IntentGraphStorage` for MinIO and other S3-compatible services; `force_path_style` defaults to `True` once `endpoint` is set (#168)
 - `idle_timeout_s` (default 60s) bounds both S3 calls on an idle clock — time with no data moving, not total elapsed — so a slow transfer completes but a wedged endpoint fails instead of hanging. `None` means the default (#168)
 
+### Fixed
+
+- **Adaptive ranking pairs an invoke with the search that offered the tool** (core fix, surfaced through this SDK). A turn that searched twice before invoking anything credited both invokes to the later query and discarded the earlier one; now each search keeps the evidence for the capability it returned. No API change — `turn_id` still means one per user message, and the README now says so.
+
 ## [0.13.0-rc.5] - 2026-09-21
 
 ### Added
