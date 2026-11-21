@@ -1,8 +1,8 @@
-# Releasing Ratel
+# Releasing the Ratel SDKs
 
 How a new version of a Ratel package is published. Read end-to-end before cutting a release.
 
-Ratel releases **per unit** (ADR-0008): ten independently-versioned release units, each on
+Ratel releases **per unit** (ADR-0008): eleven independently-versioned release units, each on
 its own tag prefix, routed through one `release.yml`. There is no workspace-shared version —
 each unit carries its own version in its own manifest and ships on its own cadence.
 
@@ -20,6 +20,7 @@ each unit carries its own version in its own manifest and ships on its own caden
 | `mastra` | `mastra-v*` | `@ratel-ai/mastra` on npm | `src/adapters/ts-mastra/package.json` |
 | `rankers-ts` | `rankers-ts-v*` | `@ratel-ai/rankers-plugin` + 5 platform packages on npm | `src/rankers/ts/package.json` |
 | `rankers-py` | `rankers-py-v*` | `ratel-ai-rankers-plugin` on PyPI | `src/rankers/python/pyproject.toml` |
+| `cloud-sdk` | `cloud-sdk-v*` | `@ratel-ai/cloud-sdk` on npm | `src/cloud-sdk/ts/package.json` |
 
 The units are registered once, in [`scripts/release-units.mjs`](scripts/release-units.mjs)
 — the single source of truth that the tag gate, the `releasable` helper, the changelog
@@ -69,13 +70,22 @@ While the TS floor is a prerelease, npm's `latest` SDK sits below it, so the plu
 `packages/sdk/llms.txt` install both packages at `@rc` (`scripts/rankers-sdk-floor.test.mjs` enforces it). Once
 the floor is GA and both packages hold `latest`, drop the `@rc` from those install lines.
 
+The **cloud-sdk** unit (`@ratel-ai/cloud-sdk`) is the pure-HTTP Ratel Cloud client. It moved
+here from `ratel-ai/ratel-cloud-sdk`, whose releases were tagged `v*`; from this repo it ships on
+`cloud-sdk-v*`. It has no native addon and no `workspace:` runtime dependency.
+
+The SDKs moved here from `ratel-ai/ratel` (the platform repo). ADR links below point at
+`ratel-ai/ratel`'s `docs/adr/`.
+
 `@ratel-ai/mcp-server` ships from a sibling repo, [ratel-ai/ratel-mcp](https://github.com/ratel-ai/ratel-mcp), on its own cadence.
 
 ## How the release pipeline is wired
 
 - **`release.yml`** — fires on any `core-v*` / `sdk-ts-v*` / `sdk-py-v*` / `telemetry-core-v*` /
-  `telemetry-ts-v*` / `telemetry-py-v*` / `mastra-v*` / `vercel-ai-sdk-v*` tag push (and
-  supports `workflow_dispatch` with `dry_run: true` for rehearsal). Its first job,
+  `telemetry-ts-v*` / `telemetry-py-v*` / `mastra-v*` / `vercel-ai-sdk-v*` / `rankers-ts-v*` /
+  `rankers-py-v*` / `cloud-sdk-v*` tag push (and supports `workflow_dispatch` with
+  `dry_run: true` for rehearsal: every publish runs with `--dry-run`, PyPI only runs
+  `twine check`, and crates.io skips the OIDC token exchange). Its first job,
   `tag-version-check`, runs [`scripts/check-release-tag.mjs`](scripts/check-release-tag.mjs) to
   route the tag to its unit and verify **only that unit's** manifests + CHANGELOG carry the
   version; the rest of the repo need not be in lockstep. The routed unit's build + publish
@@ -100,8 +110,10 @@ the floor is GA and both packages hold `latest`, drop the `@rc` from those insta
 All pre-merge checks live in **one** workflow, `.github/workflows/ci.yml`, so a single
 terminal **`ci-gate`** job can `needs:` every leg (GitHub `needs:` can't cross workflow
 files). `ci-gate` is the **only required status check** on `main` — it aggregates the
-everyday legs (`rust`, `sdk`, `ai-sdk-compat`, `python`, `telemetry`, `protocol`, `design-system`, `platform-build`, `platform-test`, `platform-compose`) **and** the
-heavy release-verify matrix, so one green check means the whole pipeline is green. See
+legs (`rust`, `sdk`, `ai-sdk-compat`, `python`, `rankers-python`, `rankers-ts-publish-build`,
+`telemetry`, `protocol`, `dependency-scan`, `secret-scan`), so one green check means the whole
+pipeline is green. The release-verify matrix (`setup` / `verify`) and the `changes` path
+classifier stayed in `ratel-ai/ratel` at the move; every leg here runs on every PR. See
 [ADR-0016](docs/adr/0016-single-ci-gate.md).
 
 Why the verify matrix is here too: `release.yml` only builds the real distributables at tag
@@ -167,7 +179,10 @@ payload without applying. Run the E2E locally per `e2e/README.md`.
 - `ratel-ai-core` (crates.io) and `ratel-ai` (PyPI) names are registered.
 - Trusted Publishers are configured on the 6 SDK npm packages, the `ratel-ai-core` crate, the
   `ratel-ai` PyPI project, `@ratel-ai/telemetry`, `@ratel-ai/vercel-ai-sdk`, and
-  `@ratel-ai/mastra` — each pointing at this repo / `release.yml` / the `release` environment.
+  `@ratel-ai/mastra` — each pointing at `release.yml` / the `release` environment.
+  **After the move to `ratel-ai/ratel-sdk`:** each Trusted Publisher must name
+  `ratel-ai/ratel-sdk` as the repository (the old entries name `ratel-ai/ratel`), and
+  `@ratel-ai/cloud-sdk`'s must change from `ratel-ai/ratel-cloud-sdk` to `ratel-ai/ratel-sdk`.
   **Not yet done:** `@ratel-ai/rankers-plugin` + its 5 platform packages (npm) and
   `ratel-ai-rankers-plugin` (PyPI) need the first-time bootstrap below, then a Trusted Publisher.
   Every unit's registry name is registered and has shipped at least once, including
@@ -178,8 +193,8 @@ payload without applying. Run the E2E locally per `e2e/README.md`.
   it needs a token + 2FA, and OIDC Trusted Publishing does not cover `npm deprecate`.
 - A `release` GitHub Environment exists whose **deployment tag policy allows the unit
   prefixes** — `core-v*`, `sdk-ts-v*`, `sdk-py-v*`, `telemetry-core-v*`, `telemetry-ts-v*`,
-  `telemetry-py-v*`, `mastra-v*`, `vercel-ai-sdk-v*`, `rankers-ts-v*`, `rankers-py-v*`
-  (the last two still to add). Keep the environment *name* `release`
+  `telemetry-py-v*`, `mastra-v*`, `vercel-ai-sdk-v*`, `rankers-ts-v*`, `rankers-py-v*`,
+  `cloud-sdk-v*` — in `ratel-ai/ratel-sdk` (environments do not move with the code). Keep the environment *name* `release`
   unchanged (it's what binds the Trusted Publishers); only its tag policy lists the prefixes.
   A tag not matched by the policy hangs the publish job at the deploy gate. The vestigial
   `telemetry-ts-otlp-v*` entry can be dropped — `release.yml` no longer triggers on it.

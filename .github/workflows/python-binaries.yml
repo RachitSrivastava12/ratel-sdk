@@ -6,7 +6,7 @@ on:
       ref:
         description: Git ref to build (branch, tag, or SHA)
         required: false
-        default: revamp
+        default: main
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.ref || github.ref }}

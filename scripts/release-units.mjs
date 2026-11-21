@@ -171,6 +171,17 @@ export const UNITS = {
       includePaths: ["src/rankers/python/**", "src/rankers/core/**"],
     },
   },
+  // The Ratel Cloud client: pure HTTP, no native addon, peers the SDK optionally.
+  // Moved from ratel-ai/ratel-cloud-sdk, whose releases were tagged `v*`.
+  "cloud-sdk": {
+    tagPrefix: "cloud-sdk-v",
+    label: "@ratel-ai/cloud-sdk → npm",
+    versionManifest: { path: "src/cloud-sdk/ts/package.json", kind: "json" },
+    manifests: [{ path: "src/cloud-sdk/ts/package.json", kind: "json" }],
+    changelogs: ["src/cloud-sdk/ts/CHANGELOG.md"],
+    srcPaths: ["src/cloud-sdk/ts"],
+    changelog: { name: "@ratel-ai/cloud-sdk", includePaths: ["src/cloud-sdk/ts/**"] },
+  },
 };
 
 export const UNIT_IDS = Object.keys(UNITS);

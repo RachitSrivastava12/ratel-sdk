@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [Unreleased]
 
 ### Added
 
@@ -21,7 +21,7 @@
   whole-envelope serialization — is now covered by a test, so a future change can't drop it
   silently.
 
-## 0.7.0-rc.4 - 2026-10-01
+## [0.7.0-rc.4] - 2026-10-01
 
 ### Added
 
@@ -33,7 +33,7 @@
   unchanged, and so does `origin: "external"` on tool calls recorded with
   `r.recordToolCall(...)`. Older SDKs simply never emit the event.
 
-## 0.7.0-rc.2 - 2026-09-16
+## [0.7.0-rc.2] - 2026-09-16
 
 ### Changed
 
@@ -50,7 +50,7 @@
   went idle or `close()` ran, so a crash in that window lost everything learned since the
   last save.
 
-## 0.7.0-rc.1 - 2026-09-15
+## [0.7.0-rc.1] - 2026-09-15
 
 ### Added
 
@@ -65,7 +65,7 @@
   feature flag or a rejected API key stop the sync outright instead of retrying forever.
   See the README's "Intent graph sync" section.
 
-## 0.6.0 - 2026-09-02
+## [0.6.0] - 2026-09-02
 
 ### Added
 
@@ -97,7 +97,7 @@
   ETag. Verified against Cloud: the local dedup hash and Cloud's canonical ETag
   produce byte-identical digests both with and without the field.
 
-## 0.5.0 - 2026-08-21
+## [0.5.0] - 2026-08-21
 
 ### Added
 
@@ -118,7 +118,7 @@
   `@opentelemetry/sdk-logs` and `@opentelemetry/exporter-logs-otlp-proto` peers, including for
   trace-only consumers.
 
-## 0.4.0 - 2026-08-15
+## [0.4.0] - 2026-08-15
 
 ### Added
 
@@ -143,7 +143,7 @@
   and deterministic 4xx rejections surface once instead of retrying forever. Against an older Cloud
   without the `deferred` field, event delivery keeps the previous best-effort behavior.
 
-## 0.3.0 - 2026-07-30
+## [0.3.0] - 2026-07-30
 
 ### Added
 
@@ -171,7 +171,7 @@
   an override. The processor only uses the stable `OTLPTraceExporter({ url, headers })`
   constructor, unchanged across the 0.2xx line.
 
-## 0.2.0
+## [0.2.0]
 
 Tracks ratel-cloud #36, which makes the intent flow asynchronous.
 
@@ -200,7 +200,7 @@ Tracks ratel-cloud #36, which makes the intent flow asynchronous.
   `"unavailable"` (reason `"extractor_not_configured"` / `"extractor_unavailable"`); retry the
   call. Runs cached by the old fallback can be healed with a single `noCache: true` analyze.
 
-## 0.1.0
+## [0.1.0]
 
 Initial release.
 

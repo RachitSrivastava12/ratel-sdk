@@ -17,6 +17,7 @@ name: Release
 #   vercel-ai-sdk-v* -> @ratel-ai/vercel-ai-sdk on npm (framework adapter, peers the SDK)
 #   rankers-ts-v* -> @ratel-ai/rankers-plugin loader + 5 platform packages (peers the SDK; ADR-0028)
 #   rankers-py-v* -> ratel-ai-rankers-plugin on PyPI (depends on ratel-ai by range; ADR-0028)
+#   cloud-sdk-v* -> @ratel-ai/cloud-sdk on npm (pure HTTP; moved from ratel-ai/ratel-cloud-sdk)
 
 on:
   push:
@@ -31,6 +32,7 @@ on:
       - 'vercel-ai-sdk-v*'
       - 'rankers-ts-v*'
       - 'rankers-py-v*'
+      - 'cloud-sdk-v*'
   workflow_dispatch:
     inputs:
       tag:
@@ -279,7 +281,9 @@ jobs:
       # and `cargo yank` doesn't free it), so preflight before the irreversible upload.
       - name: Preflight — cargo publish --dry-run
         run: cargo publish -p ratel-ai-core --dry-run
+      # A dry run uploads nothing, so it needs no crates.io token.
       - name: Authenticate to crates.io via Trusted Publishing
+        if: ${{ !inputs.dry_run }}
         uses: rust-lang/crates-io-auth-action@v1
         id: cratesio-auth
       - name: Publish
@@ -515,7 +519,9 @@ jobs:
       # crates.io uploads are irreversible; preflight before the real publish.
       - name: Preflight — cargo publish --dry-run
         run: cargo publish -p ratel-ai-telemetry --dry-run
+      # A dry run uploads nothing, so it needs no crates.io token.
       - name: Authenticate to crates.io via Trusted Publishing
+        if: ${{ !inputs.dry_run }}
         uses: rust-lang/crates-io-auth-action@v1
         id: cratesio-auth
       - name: Publish
@@ -993,6 +999,61 @@ jobs:
           skip-existing: true
         if: ${{ !inputs.dry_run }}
 
+  publish-cloud-sdk:
+    name: Publish @ratel-ai/cloud-sdk to npm
+    needs: [tag-version-check]
+    if: needs.tag-version-check.outputs.unit == 'cloud-sdk'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+      - name: Verify npm CLI version
+        shell: bash
+        run: |
+          set -e
+          npm --version
+          # Trusted Publishers requires npm CLI 11.5.1+
+          node -e "const v = require('child_process').execSync('npm --version').toString().trim(); const [maj, min, patch] = v.split('.').map(Number); if (maj < 11 || (maj === 11 && (min < 5 || (min === 5 && patch < 1)))) { console.error('npm CLI ' + v + ' < 11.5.1 (required for Trusted Publishers)'); process.exit(1); } console.log('npm ' + v + ' OK');"
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Lint, typecheck, test, build
+        run: |
+          pnpm --filter @ratel-ai/cloud-sdk run lint
+          pnpm --filter @ratel-ai/cloud-sdk run typecheck
+          pnpm --filter @ratel-ai/cloud-sdk run test
+          pnpm --filter @ratel-ai/cloud-sdk run build
+      - name: Preflight — dry-run npm publish
+        shell: bash
+        env:
+          DIST_TAG: ${{ needs.tag-version-check.outputs.dist_tag }}
+        run: (cd src/cloud-sdk/ts && npm publish --access public --tag "$DIST_TAG" --ignore-scripts --dry-run)
+      - name: Publish
+        shell: bash
+        env:
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+          DIST_TAG: ${{ needs.tag-version-check.outputs.dist_tag }}
+        run: |
+          set -e
+          name=$(node -p "require('./src/cloud-sdk/ts/package.json').name")
+          ver=$(node -p "require('./src/cloud-sdk/ts/package.json').version")
+          # Idempotent: skip if this exact name@version is already live (npm is immutable).
+          if [ -z "$DRY_RUN" ] && [ "$(npm view "$name@$ver" version 2>/dev/null)" = "$ver" ]; then
+            echo "::notice::$name@$ver already published — skipping"
+          else
+            (cd src/cloud-sdk/ts && npm publish --provenance --access public --tag "$DIST_TAG" --ignore-scripts $DRY_RUN)
+          fi
+
   github-release:
     name: GitHub Release
     needs:
@@ -1007,6 +1068,7 @@ jobs:
       - publish-vercel-ai-sdk
       - publish-rankers-ts
       - publish-rankers-py
+      - publish-cloud-sdk
     # Exactly one unit's publish job runs; the rest are skipped. Run when the tag
     # was pushed and that one job succeeded. Every unit is single-registry now, so
     # any one publish job succeeding is enough.
@@ -1022,7 +1084,8 @@ jobs:
               || needs.publish-mastra.result == 'success'
               || needs.publish-vercel-ai-sdk.result == 'success'
               || needs.publish-rankers-ts.result == 'success'
-              || needs.publish-rankers-py.result == 'success') }}
+              || needs.publish-rankers-py.result == 'success'
+              || needs.publish-cloud-sdk.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
