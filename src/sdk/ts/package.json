@@ -19,14 +19,14 @@
   },
   "license": "MIT",
   "author": "Agentified",
-  "homepage": "https://github.com/ratel-ai/ratel",
+  "homepage": "https://github.com/ratel-ai/ratel-sdk",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ratel-ai/ratel.git",
+    "url": "git+https://github.com/ratel-ai/ratel-sdk.git",
     "directory": "src/sdk/ts"
   },
   "bugs": {
-    "url": "https://github.com/ratel-ai/ratel/issues"
+    "url": "https://github.com/ratel-ai/ratel-sdk/issues"
   },
   "keywords": [
     "mcp",

@@ -43,9 +43,9 @@ otlp = [
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "ratel-ai-telemetry[otlp]"]
 
 [project.urls]
-Homepage = "https://github.com/ratel-ai/ratel"
-Repository = "https://github.com/ratel-ai/ratel"
-Issues = "https://github.com/ratel-ai/ratel/issues"
+Homepage = "https://github.com/ratel-ai/ratel-sdk"
+Repository = "https://github.com/ratel-ai/ratel-sdk"
+Issues = "https://github.com/ratel-ai/ratel-sdk/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["ratel_ai_telemetry"]

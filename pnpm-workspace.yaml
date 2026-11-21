@@ -5,6 +5,3 @@ packages:
   - 'src/telemetry/ts'
   - 'src/rankers/ts'
   - 'examples/*'
-  - 'ee'
-  - 'apps/*'
-  - 'packages/*'

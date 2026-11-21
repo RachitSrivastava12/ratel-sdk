@@ -52,9 +52,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ratel-ai/ratel"
-Repository = "https://github.com/ratel-ai/ratel"
-Issues = "https://github.com/ratel-ai/ratel/issues"
+Homepage = "https://github.com/ratel-ai/ratel-sdk"
+Repository = "https://github.com/ratel-ai/ratel-sdk"
+Issues = "https://github.com/ratel-ai/ratel-sdk/issues"
 
 [tool.maturin]
 # Mixed Rust/Python layout: the `ratel_ai/` package lives beside this file and

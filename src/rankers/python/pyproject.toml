@@ -33,9 +33,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ratel-ai/ratel"
-Repository = "https://github.com/ratel-ai/ratel"
-Issues = "https://github.com/ratel-ai/ratel/issues"
+Homepage = "https://github.com/ratel-ai/ratel-sdk"
+Repository = "https://github.com/ratel-ai/ratel-sdk"
+Issues = "https://github.com/ratel-ai/ratel-sdk/issues"
 
 [tool.maturin]
 # Mixed Rust/Python layout: the compiled extension is `ratel_ai_rankers_plugin._native`.

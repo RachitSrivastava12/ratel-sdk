@@ -19,18 +19,18 @@
     "tool-calling"
   ],
   "author": "Agentified",
-  "homepage": "https://github.com/ratel-ai/ratel",
+  "homepage": "https://github.com/ratel-ai/ratel-sdk",
   "license": "MIT",
   "engines": {
     "node": ">=20.0.0"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ratel-ai/ratel.git",
+    "url": "git+https://github.com/ratel-ai/ratel-sdk.git",
     "directory": "src/rankers/ts"
   },
   "bugs": {
-    "url": "https://github.com/ratel-ai/ratel/issues"
+    "url": "https://github.com/ratel-ai/ratel-sdk/issues"
   },
   "publishConfig": {
     "access": "public"
