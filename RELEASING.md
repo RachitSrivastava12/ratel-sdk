@@ -85,7 +85,8 @@ The SDKs moved here from `ratel-ai/ratel` (the platform repo). ADR links below p
   `telemetry-ts-v*` / `telemetry-py-v*` / `mastra-v*` / `vercel-ai-sdk-v*` / `rankers-ts-v*` /
   `rankers-py-v*` / `cloud-sdk-v*` tag push (and supports `workflow_dispatch` with
   `dry_run: true` for rehearsal: every publish runs with `--dry-run`, PyPI only runs
-  `twine check`, and crates.io skips the OIDC token exchange). Its first job,
+  `twine check`, and crates.io skips the OIDC token exchange). The `release` environment admits only
+  release tags and `v*` branches, so dispatch a dry run from a `v*` branch. Its first job,
   `tag-version-check`, runs [`scripts/check-release-tag.mjs`](scripts/check-release-tag.mjs) to
   route the tag to its unit and verify **only that unit's** manifests + CHANGELOG carry the
   version; the rest of the repo need not be in lockstep. The routed unit's build + publish
