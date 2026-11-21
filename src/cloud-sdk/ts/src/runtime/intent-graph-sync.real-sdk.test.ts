@@ -172,7 +172,6 @@ describe("attachIntentGraphSync against the real @ratel-ai/sdk", () => {
         graphKey: "cloud",
       });
 
-      // @ts-expect-error — `learn` lands on the installed devDependency only at >=0.13.0.
       runtime.tools.catalog.experimentalEnableAdaptiveRanking(sync.graph, { learn: false });
       const revBefore = sync.graph.rev;
       const jsonBefore = sync.graph.toJson();

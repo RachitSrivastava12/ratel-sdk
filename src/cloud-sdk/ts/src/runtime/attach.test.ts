@@ -221,30 +221,27 @@ describe("attach", () => {
     [401, "auth"],
     [404, "not_deployed"],
     [429, "rate_limited"],
-  ] as const)(
-    "classifies verify HTTP %i as %s without following redirects",
-    async (status, kind) => {
-      const requests: RequestInit[] = [];
-      const handle = attach(new FakeRuntime(), {
-        apiKey: "rtl_test",
-        fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
-          requests.push(init ?? {});
-          return new Response(null, { status });
-        }) as typeof fetch,
-        retry: { maxAttempts: status === 302 ? 3 : 1 },
-        warnOnFailure: false,
-      });
+  ] as const)("classifies verify HTTP %i as %s without following redirects", async (status, kind) => {
+    const requests: RequestInit[] = [];
+    const handle = attach(new FakeRuntime(), {
+      apiKey: "rtl_test",
+      fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push(init ?? {});
+        return new Response(null, { status });
+      }) as typeof fetch,
+      retry: { maxAttempts: status === 302 ? 3 : 1 },
+      warnOnFailure: false,
+    });
 
-      await expect(handle.verify()).resolves.toMatchObject({ kind, status });
-      expect(requests).toEqual([
-        expect.objectContaining({
-          method: "POST",
-          body: '{"events":[]}',
-          redirect: "manual",
-        }),
-      ]);
-    },
-  );
+    await expect(handle.verify()).resolves.toMatchObject({ kind, status });
+    expect(requests).toEqual([
+      expect.objectContaining({
+        method: "POST",
+        body: '{"events":[]}',
+        redirect: "manual",
+      }),
+    ]);
+  });
 
   it("transitions status from ok to blocked and back to ok", async () => {
     const eventStatuses = [202, 302, 202];
