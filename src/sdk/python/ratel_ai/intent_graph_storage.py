@@ -21,6 +21,7 @@ import os
 import re
 import socket
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -128,17 +129,39 @@ class LocalFileIntentGraphStorage:
         body = graph.to_json()
         rev = _rev_of(body)
 
-        disk_rev = await asyncio.to_thread(self._read_disk_rev)
-        if disk_rev != self._last_known_rev:
-            expected = self._last_known_rev if self._last_known_rev is not None else "none"
-            found = disk_rev if disk_rev is not None else "none"
-            raise StaleIntentGraphError(
-                f"intent graph at {self._path} changed since load() (on-disk rev {found}, "
-                f"expected {expected}); load() again and reapply your changes before saving"
-            )
+        await asyncio.to_thread(self._save_locked, body, rev)
 
-        await asyncio.to_thread(self._write_atomic, body)
-        self._last_known_rev = rev
+    def _save_locked(self, body: str, rev: int) -> None:
+        """Keep revision checking and replacement under one filesystem lock."""
+        lock_path = Path(f"{self._path}.lock")
+        deadline = time.monotonic() + 5.0
+
+        while True:
+            try:
+                lock_path.mkdir(mode=0o700)
+                break
+            except FileExistsError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"timed out waiting for intent graph lock at {lock_path}"
+                    ) from None
+                time.sleep(0.02)
+
+        try:
+            disk_rev = self._read_disk_rev()
+            if disk_rev != self._last_known_rev:
+                expected = self._last_known_rev if self._last_known_rev is not None else "none"
+                found = disk_rev if disk_rev is not None else "none"
+                raise StaleIntentGraphError(
+                    f"intent graph at {self._path} changed since load() "
+                    f"(on-disk rev {found}, expected {expected}); "
+                    "load() again and reapply your changes before saving"
+                )
+
+            self._write_atomic(body)
+            self._last_known_rev = rev
+        finally:
+            lock_path.rmdir()
 
     def _read_disk_rev(self) -> int | None:
         try:

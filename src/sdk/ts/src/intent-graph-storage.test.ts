@@ -1,15 +1,21 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, rmdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { renameControl } = vi.hoisted(() => ({ renameControl: { failNext: false } }));
+const { renameControl } = vi.hoisted(() => ({
+  renameControl: {
+    failNext: false,
+    barrier: null as null | (() => Promise<void>),
+  },
+}));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
     rename: async (from: string, to: string) => {
+      if (renameControl.barrier) await renameControl.barrier();
       if (renameControl.failNext) {
         renameControl.failNext = false;
         throw new Error("injected rename failure");
@@ -174,6 +180,82 @@ describe("LocalFileIntentGraphStorage", () => {
 
     const entries = await readdir(join(path, ".."));
     expect(entries.filter((entry) => entry.startsWith(".tmp-"))).toEqual([]);
+  });
+
+  it("rejects a concurrent save instead of silently overwriting another writer", async () => {
+    const path = await tempPath();
+    const writerA = new LocalFileIntentGraphStorage({ path });
+    const writerB = new LocalFileIntentGraphStorage({ path });
+
+    const base = IntentGraph.fromJson(graphJson(1));
+    await writerA.save(base);
+    await writerB.load();
+
+    let firstRenameReached!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      firstRenameReached = resolve;
+    });
+
+    let releaseFirstRename!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirstRename = resolve;
+    });
+
+    let first = true;
+    renameControl.barrier = async () => {
+      if (!first) return;
+      first = false;
+      firstRenameReached();
+      await gate;
+    };
+
+    try {
+      const saveA = writerA.save(IntentGraph.fromJson(graphJson(2)));
+      await reached;
+
+      const saveB = writerB.save(IntentGraph.fromJson(graphJson(3)));
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+      expect(await stat(`${path}.lock`).then((s) => s.isDirectory())).toBe(true);
+
+      releaseFirstRename();
+
+      const results = await Promise.allSettled([saveA, saveB]);
+
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(
+        results.filter(
+          (result) =>
+            result.status === "rejected" && result.reason instanceof StaleIntentGraphError,
+        ),
+      ).toHaveLength(1);
+
+      expect(JSON.parse(await readFile(path, "utf8")).rev).toBe(2);
+    } finally {
+      releaseFirstRename();
+      renameControl.barrier = null;
+    }
+  });
+
+  it("times out when another writer holds the lock", async () => {
+    const path = await tempPath();
+    const lockPath = `${path}.lock`;
+
+    await mkdir(lockPath);
+
+    try {
+      const storage = new LocalFileIntentGraphStorage({ path });
+
+      await expect(storage.save(IntentGraph.fromJson(graphJson(1)))).rejects.toThrow(
+        "timed out waiting for intent graph lock",
+      );
+
+      await expect(readFile(path, "utf8")).rejects.toThrow();
+      expect((await stat(lockPath)).isDirectory()).toBe(true);
+    } finally {
+      await rmdir(lockPath);
+    }
   });
 
   it("raises StaleIntentGraphError when the on-disk rev moved since load()", async () => {

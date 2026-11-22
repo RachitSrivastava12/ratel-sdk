@@ -1,4 +1,4 @@
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { IntentGraph } from "./index.js";
 import { resolveS3Endpoint, signS3Request } from "./sigv4.js";
@@ -69,29 +69,36 @@ export class LocalFileIntentGraphStorage implements IntentGraphStorage {
     const body = graph.toJson();
     const rev = revOf(body);
 
-    const diskRev = await this.readDiskRev();
-    if (diskRev !== this.lastKnownRev) {
-      throw new StaleIntentGraphError(
-        `intent graph at ${this.path} changed since load() (on-disk rev ${diskRev ?? "none"}, ` +
-          `expected ${this.lastKnownRev ?? "none"}); load() again and reapply your changes before saving`,
-      );
-    }
-
-    const tmpPath = join(
-      dirname(this.path),
-      `.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    // 0600: the graph carries the raw text of past user queries (see
-    // `IntentGraph.toJson`). The mode lands on the temp file, so the rename
-    // also tightens a target that an older build left world-readable.
+    const release = await acquireLocalGraphLock(this.path);
     try {
-      await writeFile(tmpPath, body, { encoding: "utf8", mode: 0o600 });
-      await rename(tmpPath, this.path);
-    } catch (error) {
-      await rm(tmpPath, { force: true });
-      throw error;
+      const diskRev = await this.readDiskRev();
+      if (diskRev !== this.lastKnownRev) {
+        throw new StaleIntentGraphError(
+          `intent graph at ${this.path} changed since load() (on-disk rev ${diskRev ?? "none"}, ` +
+            `expected ${this.lastKnownRev ?? "none"}); load() again and reapply your changes before saving`,
+        );
+      }
+
+      const tmpPath = join(
+        dirname(this.path),
+        `.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+
+      // 0600: the graph carries the raw text of past user queries (see
+      // `IntentGraph.toJson`). The mode lands on the temp file, so the rename
+      // also tightens a target that an older build left world-readable.
+      try {
+        await writeFile(tmpPath, body, { encoding: "utf8", mode: 0o600 });
+        await rename(tmpPath, this.path);
+      } catch (error) {
+        await rm(tmpPath, { force: true });
+        throw error;
+      }
+
+      this.lastKnownRev = rev;
+    } finally {
+      await release();
     }
-    this.lastKnownRev = rev;
   }
 
   private async readDiskRev(): Promise<number | undefined> {
@@ -101,6 +108,42 @@ export class LocalFileIntentGraphStorage implements IntentGraphStorage {
     } catch (error) {
       if (isNotFound(error)) return undefined;
       throw error;
+    }
+  }
+}
+
+/**
+ * Serialize local graph writes across instances and processes.
+ *
+ * A lock directory is created atomically on local filesystems. A crashed
+ * writer can leave it behind; we deliberately do not remove an existing
+ * lock automatically because we cannot prove its owner is gone.
+ */
+async function acquireLocalGraphLock(path: string): Promise<() => Promise<void>> {
+  const lockPath = `${path}.lock`;
+  const deadline = Date.now() + 5000;
+
+  for (;;) {
+    try {
+      await mkdir(lockPath, { mode: 0o700 });
+      return async () => {
+        await rmdir(lockPath);
+      };
+    } catch (error) {
+      if (
+        typeof error !== "object" ||
+        error === null ||
+        !("code" in error) ||
+        error.code !== "EEXIST"
+      ) {
+        throw error;
+      }
+
+      if (Date.now() >= deadline) {
+        throw new Error(`timed out waiting for intent graph lock at ${lockPath}`);
+      }
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
     }
   }
 }

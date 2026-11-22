@@ -198,6 +198,80 @@ class TestLocalFileIntentGraphStorage:
         await storage.save(IntentGraph.from_json(_graph_json(1)))
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
+    async def test_concurrent_saves_reject_stale_writer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "intent-graph.json"
+        writer_a = LocalFileIntentGraphStorage(path)
+        writer_b = LocalFileIntentGraphStorage(path)
+
+        await writer_a.save(IntentGraph.from_json(_graph_json(1)))
+        await writer_b.load()
+
+        entered = threading.Event()
+        release = threading.Event()
+        original_write = writer_a._write_atomic
+
+        def blocked_write(contents: str) -> None:
+            entered.set()
+            assert release.wait(timeout=5), "writer A was never released"
+            original_write(contents)
+
+        monkeypatch.setattr(writer_a, "_write_atomic", blocked_write)
+
+        save_a = asyncio.create_task(writer_a.save(IntentGraph.from_json(_graph_json(2))))
+        save_b = None
+        try:
+            assert await asyncio.to_thread(entered.wait, 3)
+            assert Path(f"{path}.lock").is_dir()
+
+            save_b = asyncio.create_task(writer_b.save(IntentGraph.from_json(_graph_json(3))))
+
+            # Writer B must still be waiting while A holds the lock.
+            await asyncio.sleep(0.05)
+            assert not save_b.done()
+        finally:
+            release.set()
+
+        await asyncio.wait_for(save_a, timeout=5)
+        assert save_b is not None
+        with pytest.raises(StaleIntentGraphError):
+            await asyncio.wait_for(save_b, timeout=5)
+
+        assert json.loads(path.read_text(encoding="utf-8"))["rev"] == 2
+        assert not Path(f"{path}.lock").exists()
+
+    async def test_times_out_when_another_writer_holds_lock(self, tmp_path: Path) -> None:
+        path = tmp_path / "intent-graph.json"
+        storage = LocalFileIntentGraphStorage(path)
+        lock_path = Path(f"{path}.lock")
+        lock_path.mkdir()
+
+        try:
+            with pytest.raises(TimeoutError, match="timed out waiting for intent graph lock"):
+                await storage.save(IntentGraph.from_json(_graph_json(1)))
+
+            assert not path.exists()
+            assert lock_path.is_dir()
+        finally:
+            lock_path.rmdir()
+
+    async def test_releases_lock_after_write_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "intent-graph.json"
+        storage = LocalFileIntentGraphStorage(path)
+
+        def fail_write(_contents: str) -> None:
+            raise OSError("injected write failure")
+
+        monkeypatch.setattr(storage, "_write_atomic", fail_write)
+
+        with pytest.raises(OSError, match="injected write failure"):
+            await storage.save(IntentGraph.from_json(_graph_json(1)))
+
+        assert not Path(f"{path}.lock").exists()
+
     async def test_raises_stale_error_when_on_disk_rev_moved_since_load(
         self, tmp_path: Path
     ) -> None:
