@@ -68,14 +68,15 @@ export class LocalFileIntentGraphStorage implements IntentGraphStorage {
 
     const body = graph.toJson();
     const rev = revOf(body);
+    const expectedRev = this.lastKnownRev;
 
     const release = await acquireLocalGraphLock(this.path);
     try {
       const diskRev = await this.readDiskRev();
-      if (diskRev !== this.lastKnownRev) {
+      if (diskRev !== expectedRev) {
         throw new StaleIntentGraphError(
           `intent graph at ${this.path} changed since load() (on-disk rev ${diskRev ?? "none"}, ` +
-            `expected ${this.lastKnownRev ?? "none"}); load() again and reapply your changes before saving`,
+            `expected ${expectedRev ?? "none"}); load() again and reapply your changes before saving`,
         );
       }
 

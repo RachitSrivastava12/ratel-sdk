@@ -128,10 +128,11 @@ class LocalFileIntentGraphStorage:
 
         body = graph.to_json()
         rev = _rev_of(body)
+        expected_rev = self._last_known_rev
 
-        await asyncio.to_thread(self._save_locked, body, rev)
+        await asyncio.to_thread(self._save_locked, body, rev, expected_rev)
 
-    def _save_locked(self, body: str, rev: int) -> None:
+    def _save_locked(self, body: str, rev: int, expected_rev: int | None) -> None:
         """Keep revision checking and replacement under one filesystem lock."""
         lock_path = Path(f"{self._path}.lock")
         deadline = time.monotonic() + 5.0
@@ -149,8 +150,8 @@ class LocalFileIntentGraphStorage:
 
         try:
             disk_rev = self._read_disk_rev()
-            if disk_rev != self._last_known_rev:
-                expected = self._last_known_rev if self._last_known_rev is not None else "none"
+            if disk_rev != expected_rev:
+                expected = expected_rev if expected_rev is not None else "none"
                 found = disk_rev if disk_rev is not None else "none"
                 raise StaleIntentGraphError(
                     f"intent graph at {self._path} changed since load() "

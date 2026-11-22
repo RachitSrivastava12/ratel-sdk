@@ -99,10 +99,7 @@ class TestLocalFileIntentGraphStorage:
         await storage.save(graph)
         assert path.stat().st_mtime_ns == first_mtime
 
-
-    async def test_round_trips_the_learned_clusters_not_just_the_rev(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_round_trips_the_learned_clusters_not_just_the_rev(self, tmp_path: Path) -> None:
         # Every other fixture here is an empty graph, so a save() that kept only
         # the rev counter and discarded every cluster would pass the whole suite.
         catalog = await _learning_catalog()
@@ -255,6 +252,87 @@ class TestLocalFileIntentGraphStorage:
             assert lock_path.is_dir()
         finally:
             lock_path.rmdir()
+
+    async def test_same_instance_concurrent_saves_reject_stale_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "intent-graph.json"
+        storage = LocalFileIntentGraphStorage(path)
+
+        await storage.save(IntentGraph.from_json(_graph_json(1)))
+
+        entered = threading.Event()
+        release = threading.Event()
+        original_write = storage._write_atomic
+
+        def blocked_write(contents: str) -> None:
+            entered.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("blocked write was not released")
+            original_write(contents)
+
+        monkeypatch.setattr(storage, "_write_atomic", blocked_write)
+
+        save_a = asyncio.create_task(storage.save(IntentGraph.from_json(_graph_json(2))))
+
+        try:
+            assert await asyncio.to_thread(entered.wait, 3)
+
+            save_b = asyncio.create_task(storage.save(IntentGraph.from_json(_graph_json(3))))
+
+            await asyncio.sleep(0.05)
+            assert Path(f"{path}.lock").is_dir()
+
+        finally:
+            release.set()
+
+        await save_a
+
+        with pytest.raises(StaleIntentGraphError):
+            await save_b
+
+        assert json.loads(path.read_text(encoding="utf-8"))["rev"] == 2
+        assert not Path(f"{path}.lock").exists()
+
+    async def test_cancellation_keeps_lock_until_worker_finishes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "intent-graph.json"
+        storage = LocalFileIntentGraphStorage(path)
+
+        entered = threading.Event()
+        release = threading.Event()
+        original_write = storage._write_atomic
+
+        def blocked_write(contents: str) -> None:
+            entered.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("blocked write was not released")
+            original_write(contents)
+
+        monkeypatch.setattr(storage, "_write_atomic", blocked_write)
+
+        task = asyncio.create_task(storage.save(IntentGraph.from_json(_graph_json(1))))
+
+        try:
+            assert await asyncio.to_thread(entered.wait, 3)
+            assert Path(f"{path}.lock").is_dir()
+
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            assert Path(f"{path}.lock").is_dir()
+        finally:
+            release.set()
+
+        for _ in range(100):
+            if path.exists() and not Path(f"{path}.lock").exists():
+                break
+            await asyncio.sleep(0.02)
+
+        assert json.loads(path.read_text(encoding="utf-8"))["rev"] == 1
+        assert not Path(f"{path}.lock").exists()
 
     async def test_releases_lock_after_write_failure(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
