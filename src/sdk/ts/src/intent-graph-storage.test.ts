@@ -157,14 +157,14 @@ describe("LocalFileIntentGraphStorage", () => {
 
     const storage = new LocalFileIntentGraphStorage({ path });
     await storage.save(IntentGraph.fromJson(graphJson(1)));
-    expect(stat(path).then((s) => s.mode & 0o777)).resolves.toBe(0o600);
+    await expect(stat(path).then((s) => s.mode & 0o777)).resolves.toBe(0o600);
 
     // A file an older build wrote 0644 is tightened by the next save, because
     // the mode lands on the temp file that the rename puts in its place.
     await chmod(path, 0o644);
     await storage.load();
     await storage.save(IntentGraph.fromJson(graphJson(2)));
-    expect(stat(path).then((s) => s.mode & 0o777)).resolves.toBe(0o600);
+    await expect(stat(path).then((s) => s.mode & 0o777)).resolves.toBe(0o600);
   });
 
   it("removes the temp file when the rename fails", async () => {

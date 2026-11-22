@@ -103,6 +103,9 @@ class LocalFileIntentGraphStorage:
 
     Writes atomically (temp file + `os.replace`) so a crash mid-write cannot
     leave a truncated file.
+
+    Concurrent saves are coordinated across instances using the same path.
+    Callers should not overlap load() and save() on one instance.
     """
 
     def __init__(self, path: str | os.PathLike[str]) -> None:

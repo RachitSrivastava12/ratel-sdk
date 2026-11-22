@@ -38,6 +38,9 @@ export interface LocalFileIntentGraphStorageOptions {
  * Local JSON file storage for an {@link IntentGraph} — the default backend.
  * Writes atomically (temp file + rename) so a crash mid-write cannot leave a
  * truncated file.
+ *
+ * Concurrent saves are coordinated across instances using the same path.
+ * Callers should not overlap load() and save() on one instance.
  */
 export class LocalFileIntentGraphStorage implements IntentGraphStorage {
   private readonly path: string;
