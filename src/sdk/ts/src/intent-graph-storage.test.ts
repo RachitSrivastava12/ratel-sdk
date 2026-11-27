@@ -182,6 +182,26 @@ describe("LocalFileIntentGraphStorage", () => {
     expect(entries.filter((entry) => entry.startsWith(".tmp-"))).toEqual([]);
   });
 
+  it("keeps the original error when releasing the lock also fails", async () => {
+    // Removing the lock directory mid-save makes the release rmdir fail too.
+    // The rename failure is the root cause, so it must not be masked.
+    const path = await tempPath();
+    const storage = new LocalFileIntentGraphStorage({ path });
+
+    renameControl.barrier = async () => {
+      await rmdir(`${path}.lock`);
+    };
+    renameControl.failNext = true;
+    try {
+      await expect(storage.save(IntentGraph.fromJson(graphJson(1)))).rejects.toThrow(
+        "injected rename failure",
+      );
+    } finally {
+      renameControl.barrier = null;
+      renameControl.failNext = false;
+    }
+  });
+
   it("rejects a concurrent save instead of silently overwriting another writer", async () => {
     const path = await tempPath();
     const writerA = new LocalFileIntentGraphStorage({ path });

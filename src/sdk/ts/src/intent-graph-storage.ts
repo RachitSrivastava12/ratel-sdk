@@ -100,9 +100,12 @@ export class LocalFileIntentGraphStorage implements IntentGraphStorage {
       }
 
       this.lastKnownRev = rev;
-    } finally {
-      await release();
+    } catch (error) {
+      // A failed release must not mask the error already in flight.
+      await release().catch(() => {});
+      throw error;
     }
+    await release();
   }
 
   private async readDiskRev(): Promise<number | undefined> {

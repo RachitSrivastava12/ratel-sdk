@@ -16,6 +16,7 @@ sends them with `urllib`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -164,8 +165,12 @@ class LocalFileIntentGraphStorage:
 
             self._write_atomic(body)
             self._last_known_rev = rev
-        finally:
-            lock_path.rmdir()
+        except BaseException:
+            # A failed release must not mask the error already in flight.
+            with contextlib.suppress(OSError):
+                lock_path.rmdir()
+            raise
+        lock_path.rmdir()
 
     def _read_disk_rev(self) -> int | None:
         try:

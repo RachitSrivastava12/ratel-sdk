@@ -350,6 +350,23 @@ class TestLocalFileIntentGraphStorage:
 
         assert not Path(f"{path}.lock").exists()
 
+    async def test_keeps_original_error_when_lock_release_also_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Removing the lock directory mid-save makes the release rmdir fail too.
+        # The write failure is the root cause, so it must not be masked.
+        path = tmp_path / "intent-graph.json"
+        storage = LocalFileIntentGraphStorage(path)
+
+        def fail_write(_contents: str) -> None:
+            Path(f"{path}.lock").rmdir()
+            raise OSError("injected write failure")
+
+        monkeypatch.setattr(storage, "_write_atomic", fail_write)
+
+        with pytest.raises(OSError, match="injected write failure"):
+            await storage.save(IntentGraph.from_json(_graph_json(1)))
+
     async def test_raises_stale_error_when_on_disk_rev_moved_since_load(
         self, tmp_path: Path
     ) -> None:
