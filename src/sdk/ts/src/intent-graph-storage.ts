@@ -1,4 +1,5 @@
-import { mkdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { open, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { IntentGraph } from "./index.js";
 import { resolveS3Endpoint, signS3Request } from "./sigv4.js";
@@ -119,44 +120,181 @@ export class LocalFileIntentGraphStorage implements IntentGraphStorage {
   }
 }
 
+/** How long a save waits for another writer's lock before it gives up. */
+const LOCK_TIMEOUT_MS = 5000;
+/** How often a waiting save checks the lock again. */
+const LOCK_RETRY_MS = 20;
+/**
+ * How old a lock with no readable owner must be before a waiter removes it.
+ * The owner is written right after the lock is created, so a younger lock can
+ * belong to a writer that has not written its owner yet.
+ */
+const OWNERLESS_LOCK_GRACE_MS = 10_000;
+
+/** The writer that holds a lock, as recorded in the lock file. */
+interface LockOwner {
+  readonly pid: number;
+  readonly host: string;
+}
+
+/** What a waiter found when it examined an existing lock. */
+interface LockState {
+  readonly owner: LockOwner | undefined;
+  readonly stale: boolean;
+}
+
 /**
  * Serialize local graph writes across instances and processes.
  *
- * A lock directory is created atomically on local filesystems. A crashed
- * writer can leave it behind; we deliberately do not remove an existing
- * lock automatically because we cannot prove its owner is gone.
+ * The lock is a file at `<path>.lock`, created exclusively, that records its
+ * owner as `{pid, host}`. A waiter removes a lock whose owner crashed:
+ *
+ * - the owner is on this host and its pid is no longer running, or
+ * - the lock has no readable owner and is older than a grace period (the
+ *   writer crashed between creating the lock and writing its owner).
+ *
+ * To remove a stale lock, a waiter first renames it to a unique tombstone, so
+ * only one waiter can take it. It then examines the tombstone again: if
+ * another waiter replaced the stale lock with a live one in the meantime, it
+ * puts that lock back.
+ *
+ * Limits: a lock from a different host is never removed, because its pid
+ * cannot be checked from here. If the pid of a crashed owner was reused by
+ * an unrelated process, the lock looks live. In both cases the save times
+ * out, and the error names the lock and its owner so that an operator can
+ * delete it.
  */
 async function acquireLocalGraphLock(path: string): Promise<() => Promise<void>> {
   const lockPath = `${path}.lock`;
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
 
   for (;;) {
-    try {
-      await mkdir(lockPath, { mode: 0o700 });
+    if (await tryCreateLock(lockPath)) {
       return async () => {
-        await rmdir(lockPath);
+        await unlink(lockPath);
       };
-    } catch (error) {
-      if (
-        typeof error !== "object" ||
-        error === null ||
-        !("code" in error) ||
-        error.code !== "EEXIST"
-      ) {
-        throw error;
-      }
-
-      if (Date.now() >= deadline) {
-        throw new Error(`timed out waiting for intent graph lock at ${lockPath}`);
-      }
-
-      await new Promise<void>((resolve) => setTimeout(resolve, 20));
     }
+
+    const state = await examineLock(lockPath);
+    if (state === undefined) continue; // Released while we looked: try again now.
+    if (state.stale) {
+      await takeOverStaleLock(lockPath);
+      continue;
+    }
+
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `timed out waiting for intent graph lock at ${lockPath} ` +
+          `(held by ${describeLockOwner(state.owner)}); ` +
+          "if that process is no longer running, delete the lock file and retry",
+      );
+    }
+
+    await new Promise<void>((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
   }
 }
 
+/** Create the lock and record this process as its owner. `false` if it exists. */
+async function tryCreateLock(lockPath: string): Promise<boolean> {
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(lockPath, "wx", 0o600);
+  } catch (error) {
+    if (hasCode(error, "EEXIST")) return false;
+    throw error;
+  }
+
+  const owner: LockOwner = { pid: process.pid, host: hostname() };
+  try {
+    await handle.writeFile(JSON.stringify(owner), "utf8");
+    await handle.close();
+  } catch (error) {
+    await handle.close().catch(() => {});
+    await unlink(lockPath).catch(() => {});
+    throw error;
+  }
+  return true;
+}
+
+/** Read the owner of the lock at `lockPath`. `undefined` if the lock is gone. */
+async function examineLock(lockPath: string): Promise<LockState | undefined> {
+  let text: string;
+  let modifiedMs: number;
+  try {
+    modifiedMs = (await stat(lockPath)).mtimeMs;
+    text = await readFile(lockPath, "utf8");
+  } catch (error) {
+    if (isNotFound(error)) return undefined;
+    // We cannot read the owner (e.g. another user's lock): never remove it.
+    return { owner: undefined, stale: false };
+  }
+
+  const owner = parseLockOwner(text);
+  if (owner === undefined) {
+    return { owner, stale: Date.now() - modifiedMs > OWNERLESS_LOCK_GRACE_MS };
+  }
+  return { owner, stale: owner.host === hostname() && !isProcessAlive(owner.pid) };
+}
+
+/**
+ * Remove a stale lock without racing another waiter that does the same.
+ *
+ * Only the lock that this waiter renamed is deleted. If the renamed lock is
+ * no longer stale, another waiter replaced the stale lock first, and the
+ * renamed lock is put back.
+ */
+async function takeOverStaleLock(lockPath: string): Promise<void> {
+  const tombstone = `${lockPath}.stale-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  try {
+    await rename(lockPath, tombstone);
+  } catch (error) {
+    if (isNotFound(error)) return; // Another waiter took it over first.
+    throw error;
+  }
+
+  const state = await examineLock(tombstone);
+  if (state?.stale === false) {
+    await rename(tombstone, lockPath);
+    return;
+  }
+  await rm(tombstone, { force: true });
+}
+
+function parseLockOwner(text: string): LockOwner | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null) return undefined;
+  const { pid, host } = value as { pid?: unknown; host?: unknown };
+  // A pid of 0 or less would make `process.kill` signal a process group.
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return undefined;
+  if (typeof host !== "string" || host === "") return undefined;
+  return { pid, host };
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the process exists, but belongs to another user.
+    return !hasCode(error, "ESRCH");
+  }
+}
+
+function describeLockOwner(owner: LockOwner | undefined): string {
+  return owner ? `pid ${owner.pid} on host ${owner.host}` : "an unknown owner";
+}
+
+function hasCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
+}
+
 function isNotFound(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+  return hasCode(error, "ENOENT");
 }
 
 /**
